@@ -43,8 +43,8 @@ class sp_instance:
         # sp = Spotify(client_credentials_manager=SpotifyClientCredentials())
 
         # User-data manager
-        cid = getenv('SPOTIPY_CLIENT_ID')
-        secret = getenv('SPOTIPY_CLIENT_SECRET')
+        cid = getenv('SPOTIFY_CLIENT_ID')
+        secret = getenv('SPOTIFY_CLIENT_SECRET')
 
         if cid == "YOUR_CLIENT_ID":
             DERROR("Client ID not set. Please update the .env file with your own Client ID. See README.md for instructions.")

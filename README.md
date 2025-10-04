@@ -73,7 +73,7 @@ A Linux tool for recording Spotify audio streams with high quality using PipeWir
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/fm16191/spotify-recorder.git
+git clone https://github.com/cloudconsultants/spotify-recorder.git
 cd spotify-recorder
 ```
 
@@ -161,9 +161,9 @@ nano .env  # or use your preferred editor
 
 Replace the placeholder values:
 ```env
-SPOTIPY_CLIENT_ID='your_actual_client_id_here'
-SPOTIPY_CLIENT_SECRET='your_actual_client_secret_here'
-SPOTIPY_REDIRECT_URI='http://127.0.0.1:8000/callback'
+SPOTIFY_CLIENT_ID='your_actual_client_id_here'
+SPOTIFY_CLIENT_SECRET='your_actual_client_secret_here'
+SPOTIFY_REDIRECT_URI='http://127.0.0.1:8000/callback'
 ```
 
 ### Step 4: First Run OAuth Authorization
@@ -424,7 +424,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Credits
 
-- Original project by [fm16191](https://github.com/fm16191)
+- Original project by [cloudconsultants](https://github.com/cloudconsultants)
 - Modernized for Fedora 42 + PipeWire (October 2025)
 - Uses [Spotipy](https://github.com/spotipy-dev/spotipy) for Spotify Web API
 - Uses [Mutagen](https://github.com/quodlibet/mutagen) for ID3 tagging

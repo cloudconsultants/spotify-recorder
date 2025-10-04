@@ -424,8 +424,8 @@ class SpotifyRecorderCLI:
             return False, "Not found"
 
         load_dotenv(self.env_file)
-        client_id = os.getenv('SPOTIPY_CLIENT_ID', '')
-        client_secret = os.getenv('SPOTIPY_CLIENT_SECRET', '')
+        client_id = os.getenv('SPOTIFY_CLIENT_ID', '')
+        client_secret = os.getenv('SPOTIFY_CLIENT_SECRET', '')
 
         if client_id == 'YOUR_CLIENT_ID' or not client_id:
             return False, "Not configured"
@@ -463,9 +463,9 @@ class SpotifyRecorderCLI:
 
         # Create .env file
         env_content = f"""# Spotify API Credentials
-SPOTIPY_CLIENT_ID='{client_id}'
-SPOTIPY_CLIENT_SECRET='{client_secret}'
-SPOTIPY_REDIRECT_URI='http://127.0.0.1:8000/callback'
+SPOTIFY_CLIENT_ID='{client_id}'
+SPOTIFY_CLIENT_SECRET='{client_secret}'
+SPOTIFY_REDIRECT_URI='http://127.0.0.1:8000/callback'
 """
 
         self.env_file.write_text(env_content)

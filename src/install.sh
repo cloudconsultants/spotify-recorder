@@ -80,9 +80,9 @@ cd "$(dirname "$0")/.."
 if [ ! -f .env ]; then
     echo "  → Creating .env file from template"
     cat > .env << 'EOF'
-SPOTIPY_CLIENT_ID='YOUR_CLIENT_ID'
-SPOTIPY_CLIENT_SECRET='YOUR_CLIENT_SECRET'
-SPOTIPY_REDIRECT_URI='http://127.0.0.1:8000/callback'
+SPOTIFY_CLIENT_ID='YOUR_CLIENT_ID'
+SPOTIFY_CLIENT_SECRET='YOUR_CLIENT_SECRET'
+SPOTIFY_REDIRECT_URI='http://127.0.0.1:8000/callback'
 EOF
     echo "  ✓ .env file created"
 else
