@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Spotify Recorder - Wrapper Script"""
+import sys, os
+script_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.join(script_dir, 'src')
+sys.path.insert(0, src_dir)
+os.chdir(script_dir)  # Stay at project root for file output
+
+# Check if running in interactive CLI mode
+if len(sys.argv) == 1 or sys.argv[1] in ['--setup', '--check', '--menu']:
+    # Run interactive CLI
+    from cli import SpotifyRecorderCLI
+    cli = SpotifyRecorderCLI()
+
+    if '--setup' in sys.argv:
+        cli.setup_wizard()
+    elif '--check' in sys.argv:
+        cli.check_system_requirements()
+    else:
+        # No arguments or --menu: run interactive menu
+        cli.main_menu()
+else:
+    # Run existing CLI with arguments
+    exec(open(os.path.join(src_dir, 'api.py')).read())

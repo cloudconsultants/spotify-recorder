@@ -1,0 +1,40 @@
+# Environment and credentials
+.env
+.cache
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Output directories
+songs/
+songs_build/
+**/songs/
+**/*.mp3
+**/*.rec
+**/album.json
+
+# Legacy repository and directories
+legacy_repository/
+**/legacy_repository/
+
+# Test files
+test*
+
+# Only keep template json files
+*.json
+!.env.example
+!**/*.json.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
