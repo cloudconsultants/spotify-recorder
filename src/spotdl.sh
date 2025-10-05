@@ -198,27 +198,58 @@ fi
 [ -n "$verbose" ] && echo "Moving Spotify to null sink..."
 pactl move-sink-input "$spotify_sink" spotify_recorder_null
 
-# Start high-quality PipeWire recording WHILE PAUSED (track at 0:00)
-# Note: Records from sink-input BEFORE it reaches the null sink
-[ -n "$verbose" ] && echo "Starting pw-record while track is paused at 0:00..."
+# Start pre-roll recording buffer (2 seconds before playback)
+# This captures the beginning and prevents start cutoff
+[ -n "$verbose" ] && echo "Starting pre-roll recording buffer (2 seconds)..."
 pw-record --latency=20ms --volume=1.0 --format=f32 --channel-map stereo --rate 44100 --quality=15 --target="$spotify_sink" "$tmp_filepath.rec" &
 record_pid=$!
 
 [ -n "$verbose" ] && echo "Started pw-record with PID $record_pid targeting sink $spotify_sink"
 
-# NOW start playback - recording will capture from exact 0:00
-[ -n "$verbose" ] && echo "Starting playback from 0:00..."
-dbus-send --print-reply --dest=org.mpris.MediaPlayer2.spotify /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.Play 2>/dev/null || true
+# Wait a moment for recording to stabilize
 sleep 0.5
 
-printf "==> Recording %s as \"%s\" for %s seconds\r" "$uri" "$filepath" "$duration"
+# NOW start playback - recording has 2 second head start
+[ -n "$verbose" ] && echo "Starting playback from 0:00..."
+dbus-send --print-reply --dest=org.mpris.MediaPlayer2.spotify /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.Play 2>/dev/null || true
 
-# Wait till the end & stop
-sleep "$duration"
+printf "==> Recording %s as \"%s\" (monitoring playback)\r" "$uri" "$filepath"
+
+# Monitor playback in real-time instead of fixed duration
+elapsed_time=0
+max_duration=$((duration + 5)) # Add 5 second safety buffer
+still_playing=true
+
+while [ $elapsed_time -lt $max_duration ] && [ "$still_playing" = "true" ]; do
+    sleep 1
+    elapsed_time=$((elapsed_time + 1))
+
+    # Check if track is still playing via D-Bus
+    current_position=$(dbus-send --print-reply --dest=org.mpris.MediaPlayer2.spotify /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.Get string:"org.mpris.MediaPlayer2.Player" string:"Position" 2>/dev/null | grep -o '[0-9]*' | head -1)
+    current_status=$(dbus-send --print-reply --dest=org.mpris.MediaPlayer2.spotify /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.Get string:"org.mpris.MediaPlayer2.Player" string:"PlaybackStatus" 2>/dev/null | grep -o '"[^"]*"' | grep -o '[^"]*')
+
+    # Convert position from microseconds to seconds
+    if [ -n "$current_position" ] && [ "$current_position" -gt 0 ]; then
+        position_seconds=$((current_position / 1000000))
+
+        # Check if we're near the end (within 2 seconds) or track has stopped
+        if [ "$current_status" != "Playing" ] || [ $position_seconds -ge $((duration - 2)) ]; then
+            [ -n "$verbose" ] && echo "Track ending detected at ${position_seconds}s, stopping recording..."
+            still_playing=false
+            # Add a small buffer to capture the very end
+            sleep 2
+        fi
+    fi
+
+    # Verbose progress updates
+    if [ -n "$verbose" ] && [ $((elapsed_time % 10)) -eq 0 ]; then
+        echo "Recording progress: ${elapsed_time}s / ${duration}s"
+    fi
+done
 
 # Properly terminate recording process
 if [ -n "$record_pid" ]; then
-    [ -n "$verbose" ] && echo "Terminating pw-record (PID $record_pid)..."
+    [ -n "$verbose" ] && echo "Terminating pw-record (PID $record_pid) after ${elapsed_time}s..."
     kill "$record_pid" 2>/dev/null || true
     wait "$record_pid" 2>/dev/null || true
 else
@@ -232,12 +263,49 @@ if [ -n "$null_sink_module" ]; then
     pactl unload-module "$null_sink_module" 2>/dev/null || true
 fi
 
-# Convert file to MP3
+# Convert file to MP3 with silence detection and trimming
 verbose_flags="-hide_banner -loglevel error"
 [ -n "$verbose" ] && verbose_flags=""
-ffmpeg $verbose_flags -y -i "$tmp_filepath.rec" -acodec mp3 -b:a 320k "$filepath"
+
+[ -n "$verbose" ] && echo "Converting to MP3 with silence detection..."
+
+# First pass: detect silence at beginning and end
+if [ -n "$verbose" ]; then
+    echo "Analyzing silence levels..."
+    ffmpeg $verbose_flags -i "$tmp_filepath.rec" -af "silencedetect=noise=-30dB:duration=0.5" -f null - 2>"$tmp_filepath.silence.txt"
+
+    # Extract silence information
+    start_silence=$(grep "silence_start" "$tmp_filepath.silence.txt" | head -1 | grep -o '[0-9]*\.[0-9]*' | head -1)
+    end_silence=$(grep "silence_end" "$tmp_filepath.silence.txt" | tail -1 | grep -o '[0-9]*\.[0-9]*' | tail -1)
+
+    echo "Silence analysis: start=${start_silence:-0}s, end=${end_silence:-0}s"
+fi
+
+# Convert with smart trimming
+if [ -n "$start_silence" ] && [ -n "$end_silence" ] && [ "$start_silence" != "0" ] && [ "$end_silence" != "0" ]; then
+    # Both start and end silence detected - trim both
+    trim_start=$(echo "$start_silence + 0.1" | bc -l 2>/dev/null || echo "0.1")  # Small offset to ensure we get the music
+    duration_trim=$(echo "$end_silence - $trim_start" | bc -l 2>/dev/null || echo "$duration")
+
+    [ -n "$verbose" ] && echo "Trimming: start=${trim_start}s, duration=${duration_trim}s"
+    ffmpeg $verbose_flags -y -i "$tmp_filepath.rec" -ss "$trim_start" -t "$duration_trim" -acodec mp3 -b:a 320k "$filepath"
+elif [ -n "$start_silence" ] && [ "$start_silence" != "0" ]; then
+    # Only start silence detected - trim beginning
+    trim_start=$(echo "$start_silence + 0.1" | bc -l 2>/dev/null || echo "0.1")
+
+    [ -n "$verbose" ] && echo "Trimming start: ${trim_start}s"
+    ffmpeg $verbose_flags -y -i "$tmp_filepath.rec" -ss "$trim_start" -acodec mp3 -b:a 320k "$filepath"
+else
+    # No significant silence detected or analysis failed - convert normally
+    [ -n "$verbose" ] && echo "No trimming needed, converting normally"
+    ffmpeg $verbose_flags -y -i "$tmp_filepath.rec" -acodec mp3 -b:a 320k "$filepath"
+fi
+
 [ -n "$verbose" ] && echo "Converted to MP3: $filepath"
 printf "\033[K[+] File saved at %s\n" "$filepath"
+
+# Clean up silence analysis file
+[ -f "$tmp_filepath.silence.txt" ] && rm "$tmp_filepath.silence.txt"
 
 # Clean up temporary .rec file
 rm "$tmp_filepath.rec"

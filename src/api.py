@@ -269,27 +269,108 @@ class sp_instance:
             return False
 
         if not file_exists: # If file doesn't existed before, but now exists - if file has been created
-            # Add retry mechanism for metadata editing
-            max_metadata_attempts = 3
+            # Enhanced retry mechanism for metadata editing with exponential backoff
+            max_metadata_attempts = 5
             metadata_success = False
+            base_delay = 0.5  # Start with 0.5 seconds
 
             for attempt in range(max_metadata_attempts):
                 try:
                     self.edit_metadata(filepath, track_info, playlist_name=playlist_name, parent_album=parent_album)
                     metadata_success = True
+
+                    if attempt > 0:
+                        DINFO(f"Metadata editing succeeded on attempt {attempt + 1}")
                     break
+
+                except FileNotFoundError as e:
+                    DINFO(f"Critical error - file not found: {e}")
+                    break  # Don't retry if file doesn't exist
+
                 except Exception as e:
                     if attempt == max_metadata_attempts - 1:
                         DINFO(f"Warning: Failed to edit metadata for {filepath} after {max_metadata_attempts} attempts: {e}")
                     else:
-                        DINFO(f"Retry {attempt + 1}/{max_metadata_attempts} for metadata editing of {filepath}: {e}")
-                        time.sleep(0.2)
+                        # Exponential backoff: 0.5s, 1s, 2s, 4s
+                        delay = base_delay * (2 ** attempt)
+                        DINFO(f"Retry {attempt + 1}/{max_metadata_attempts} for metadata editing of {filepath} in {delay}s: {e}")
+                        time.sleep(delay)
                         continue
 
             if metadata_success:
-                self.add_lyrics(args.lyrics_mode, filepath, track_info)
+                # Validate that metadata was applied correctly
+                try:
+                    self.validate_metadata(filepath, track_info)
+                    if self.verbose:
+                        DOK(f"Metadata validation passed for {filepath}")
+                except Exception as e:
+                    DINFO(f"Warning: Metadata validation failed for {filepath}: {e}")
+
+                # Add lyrics after ensuring metadata is properly saved
+                try:
+                    self.add_lyrics(args.lyrics_mode, filepath, track_info)
+                except Exception as e:
+                    DINFO(f"Warning: Failed to add lyrics to {filepath}: {e}")
+                    # Don't fail the entire recording if lyrics fail
+            else:
+                DERROR(f"Failed to apply metadata to {filepath} after all retries")
 
         return filepath
+
+    def validate_metadata(self, filepath, track_info):
+        """
+        Validate that metadata was applied correctly to the MP3 file
+
+        Args:
+            filepath: Path to the MP3 file
+            track_info: Track metadata dictionary from Spotify API
+
+        Raises:
+            Exception: If validation fails
+        """
+        try:
+            from mutagen.id3 import ID3
+            audio = ID3(filepath)
+
+            # Check essential metadata fields
+            expected_title = track_info.get('name', '')
+            expected_artist = ', '.join([artist['name'] for artist in track_info.get('artists', [])])
+            expected_album = track_info.get('album', {}).get('name', '')
+
+            # Validate title
+            title_frames = audio.getall('TIT2')
+            if not title_frames or not title_frames[0].text:
+                raise Exception("Missing title tag")
+            actual_title = title_frames[0].text[0] if title_frames[0].text else ""
+            if actual_title.lower() != expected_title.lower():
+                DINFO(f"Title mismatch: expected '{expected_title}', got '{actual_title}'")
+
+            # Validate artist
+            artist_frames = audio.getall('TPE1')
+            if not artist_frames or not artist_frames[0].text:
+                raise Exception("Missing artist tag")
+            actual_artist = artist_frames[0].text[0] if artist_frames[0].text else ""
+            if actual_artist.lower() != expected_artist.lower():
+                DINFO(f"Artist mismatch: expected '{expected_artist}', got '{actual_artist}'")
+
+            # Validate album
+            album_frames = audio.getall('TALB')
+            if not album_frames or not album_frames[0].text:
+                raise Exception("Missing album tag")
+            actual_album = album_frames[0].text[0] if album_frames[0].text else ""
+            if actual_album.lower() != expected_album.lower():
+                DINFO(f"Album mismatch: expected '{expected_album}', got '{actual_album}'")
+
+            # Check for album cover (optional)
+            cover_frames = audio.getall('APIC')
+            if not cover_frames:
+                DINFO("No album cover found (optional)")
+
+            if self.verbose:
+                DOK(f"Metadata validated: Title='{actual_title}', Artist='{actual_artist}', Album='{actual_album}'")
+
+        except Exception as e:
+            raise Exception(f"Metadata validation failed: {e}")
 
     def set_track_filename(self, track_info, folder_path=None):
         track_number = track_info['track_number']
@@ -404,8 +485,46 @@ class sp_instance:
         if self.verbose:
             DINFO("Edit metadata")
 
+        # Ensure file exists and is accessible
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"MP3 file not found: {filepath}")
+
+        # Check file size to ensure it's not being written to
+        initial_size = os.path.getsize(filepath)
+        time.sleep(0.5)  # Brief pause to ensure any ongoing writes complete
+        current_size = os.path.getsize(filepath)
+
+        if initial_size != current_size:
+            DINFO(f"File size changed ({initial_size} -> {current_size}), waiting for stabilization...")
+            # Wait for file size to stabilize
+            stable_count = 0
+            while stable_count < 3:
+                time.sleep(1)
+                new_size = os.path.getsize(filepath)
+                if new_size == current_size:
+                    stable_count += 1
+                else:
+                    current_size = new_size
+                    stable_count = 0
+            DINFO("File size stabilized, proceeding with metadata editing")
+
         from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TPUB, TBPM, TCON, APIC, TDRC, TENC, TRCK, TSRC, WXXX, COMM
-        f = ID3(filepath)
+
+        # Try to open the file, handling potential corruption/incomplete writes
+        try:
+            f = ID3(filepath)
+        except Exception as e:
+            DINFO(f"Error opening ID3 tags, attempting to repair: {e}")
+            # Try to create new ID3 tag if file is corrupted
+            try:
+                from mutagen import File
+                audio = File(filepath)
+                if audio is None:
+                    raise ValueError("File appears to be corrupted or incomplete")
+                audio.add_tags()
+                f = audio.tags
+            except Exception as e2:
+                raise Exception(f"Failed to open or repair ID3 tags: {e2}")
 
         # https://mutagen-specs.readthedocs.io/en/latest/id3/id3v2.4.0-frames.html
 
@@ -475,29 +594,65 @@ class sp_instance:
 
         f.save()
 
-        # Album Cover
-        album_cover_link = track_info["album"]["images"][0]["url"]
+        # Album Cover (improved error handling)
+        album_cover_data = None
+        mime = 'image/jpeg'
+
         try:
-            res = requests.get(album_cover_link, stream=True)
+            # Get album cover link with defensive access
+            images = track_info.get("album", {}).get("images", [])
+            if not images:
+                DINFO("No album cover images found")
+                return f.save()  # Save other metadata and return
+
+            album_cover_link = images[0]["url"]
+
+            # Download album cover
+            res = requests.get(album_cover_link, stream=True, timeout=10)
             if not res.status_code == 200:
-                raise requests.exceptions.RequestException("Request didn't get through")
+                raise requests.exceptions.RequestException(f"HTTP {res.status_code}")
+
             album_cover_data = res.content
-        except:
-            pass
-        finally:
-            mime = 'image/jpeg'
+
+            # Detect MIME type
             if '.png' in album_cover_link:
                 mime = 'image/png'
 
+            # Validate image data
+            if len(album_cover_data) < 100:  # Too small to be a valid image
+                raise ValueError("Album cover data too small")
+
+        except Exception as e:
+            DINFO(f"Warning: Failed to download/process album cover: {e}")
+            # Save other metadata even if album cover fails
+            f.save()
+            return
+
+        # Add album cover as separate operation to prevent corruption
+        try:
+            # Re-open file to ensure it's in a clean state
             audio = mutagen.File(filepath)
+            if audio is None:
+                raise ValueError("Cannot reopen audio file for album cover")
+
+            # Add or update album cover
             audio.tags.add(
                 APIC(
-                    # encoding=3, # 3 is for utf-8
-                    mime=mime, # image/jpeg or image/png
-                    type=3, # 3 is for the cover image
+                    encoding=3,  # UTF-8
+                    mime=mime,
+                    type=3,  # Cover image
                     desc=u'Cover',
-                    data=album_cover_data))
+                    data=album_cover_data
+                )
+            )
             audio.save()
+
+            if self.verbose:
+                DINFO("Album cover added successfully")
+
+        except Exception as e:
+            DINFO(f"Warning: Failed to add album cover: {e}")
+            # Don't fail the entire metadata operation if album cover fails
 
     # Available modes : 'none', 'synced', 'unsynced', 'both', 'synced_USLT'
     def add_lyrics(self, mode, filepath, track_info):
