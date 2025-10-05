@@ -1,6 +1,8 @@
 # Spotify Recorder
 
-A Linux tool for recording Spotify audio streams with high quality using PipeWire.
+**A complete modern rewrite** of a Linux tool for recording Spotify audio streams with high quality using PipeWire.
+
+*This represents a substantial architectural overhaul with 3x code expansion, featuring modern CLI interface, modular design, and enhanced reliability.*
 
 ## ⚠️ Legal Disclaimer
 
@@ -424,8 +426,10 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Credits
 
-- Original project by [cloudconsultants](https://github.com/cloudconsultants)
-- Modernized for Fedora 42 + PipeWire (October 2025)
+- **Inspired by** original concept from [fm16191](https://github.com/fm16191)
+- **Complete rewrite and modernization** by [cloudconsultants](https://github.com/cloudconsultants)
+- **Substantial architectural overhaul** with 3x code expansion (636 → 1,667 lines)
+- **Modern implementation** for Fedora 42 + PipeWire (October 2025)
 - Uses [Spotipy](https://github.com/spotipy-dev/spotipy) for Spotify Web API
 - Uses [Mutagen](https://github.com/quodlibet/mutagen) for ID3 tagging
 
